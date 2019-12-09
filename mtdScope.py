@@ -27,38 +27,60 @@ class scopeEmulator:
         else: self.nevent = int(self.size/self.nsamples)
         
     def totalEvent(self): return self.nevent
+
+    def makeTimeAxis(self):
+        self.timeAxis = np.array([nx*self.dt for nx in range(self.nsamples)], dtype=np.int64)
     
     def isEventValid(self, i):
         if i > self.nevent: 
             print('Error: Event number '+str(i)+' is invalide, the total event number: '+str(self.nevent))
             return False
         return True
-    
+
+    def sliceEvent(self):
+        self.events = np.hsplit(self._db_, self.nevent)
+        self.makeTimeAxis()
+
     def getEvent(self, i):
+        #only return the y value for the event, need to slice the events first
         if(not self.isEventValid(i)): return []
-        _data_ = [np.array([nx for nx in range(i*self.nsamples, (i+1)*self.nsamples)], dtype=np.int64)]
-        for data in self._db_:
-            _data_.append(data[i*self.nsamples:(i+1)*self.nsamples])
-        
+        _data_=self.events[i]
         return _data_
     
     def getEventScaled(self, i):
+        #return the scaled y value of the event
         points = self.getEvent(i)
         scaledPoints = []
-        scale = np.insert(self.yscale, 0, self.dt)
-        for i in range(0,self.nchannel+1):
-            scaledPoints.append(np.multiply(points[i], scale[i], dtype = np.float64))
+        for i in range(0,self.nchannel):
+            scaledPoints.append(np.multiply(points[i], self.yscale[i], dtype = np.float64))
+
+        #time_check = time.time()
+        #print("scaling consume:",time_check-time_start)
+        #time_start = time_check
+
         return scaledPoints
     
     def getEventAdjusted(self, i):
-        points = self.getEventScaled(i)
-        nbins = 20
+        #time_start = time.time()
+        ys = self.getEventScaled(i)
+        #time_check = time.time()
+        #print("reading 1 consume:",time_check-time_start)
+        #time_start = time_check
+
+        nbins = int(np.floor(1000/self.dt))
         
-        points[0] = np.subtract(points[0], points[0][0])
+        points=[]
+        points.append(self.timeAxis)
         for i in range(1,self.nchannel+1):
+            points.append(ys[i-1])
             mean = points[i][0:nbins].mean()
             points[i] = np.subtract(points[i], mean)
         self._loadedData_ = points
+
+        #time_check = time.time()
+        #print("reading 2 consume:",time_check-time_start)
+        #time_start = time_check
+
         return points
     
     def interpolation(self, x, y):
@@ -124,13 +146,24 @@ class scopeEmulator:
 
     def leftJumpScanPrecise(self, start, y, mean, std):
         index = start
-        if index = -1 : return index
+        if index == -1 : return index
         for i in range(len(y)):
             dev = abs(mean-y[i])
             if( dev > 15*std): 
                 return i
         return -1
 
+    def crossFinder(self, y):
+        # return the cross index in array y
+        jmin = y.argmin()
+        jmax = y.argmax()
+        if(jmax<jmin):
+            holder=jmax
+            jmax=jmin
+            jmin=holder
+        x = np.where(np.diff(np.sign(y)))[0]
+        arr1 = np.where((x < jmax) & (x > jmin))[0]
+        return int(x[arr1[0]])
 
     def leftJumpScanFast(self,x, y):
         nmax = 50
@@ -165,16 +198,42 @@ class scopeEmulator:
                 a0 = a1
                 start = i
         return [start, -1]
-    
-    #def showCrossRegion(self, channel):
-    #    points= self._loadedData_
-    #    n0 = self.leftJumpScan(points[channel])
-    #    inte = self.crossRegion(points[channel],n0)
-    #    plt.plot(points[0], points[channel])
-    #    print(inte[0], inte[1])
-    #    plt.plot(points[0][int(inte[0]):int(inte[1])], points[channel][int(inte[0]):int(inte[1])])
+
+
+    def signalCFT(self, x, y, ntrun, method):
+        f = self.simulateCFT(x, y)
+        #inte = self.crossRegion(f,n0)
+        yy = f(x[ntrun:-ntrun])
+        x0 = self.crossFinder(yy) 
+        inte = [x[x0+ntrun], x[x0+1+ntrun]]
+        if method == 'newton':
+            res = optimize.newton(lambda x : f(x), x0=(inte[0]+inte[1])/2)
+        elif method == 'linear':
+            x1 = inte[0]
+            x2 = inte[1]
+            k = (f(x2)-f(x1))/(x2-x1)
+            res = x1-f(x1)/k
+        else: 
+            raise ValueError('No method: '+method+' defined in signalCFT function')
+        return res
 
     def getCFTiming(self, i, method):
+        #time_start = time.time()
+        points = self.getEventAdjusted(i)
+        #time_check = time.time()
+        #print("reading consume:",time_start-time_check)
+        #time_start = time_check
+        ntrun =int( np.floor(2000/self.dt))
+        ts = []
+        for channel in range(1, 3):
+            res = self.signalCFT(points[0], points[channel], ntrun, method)
+            ts.append(res)
+        #time_check = time.time()
+        #print("calculation consume:",time_start-time_check)
+        #time_start = time_check
+        return ts
+
+    def getCFTiming2(self, i, method):
         points = self.getEventAdjusted(i)
         ts = []
         for channel in range(1, 3):
@@ -207,22 +266,46 @@ class scopeEmulator:
         print('time consumed: '+str(timing_stop-timing_start))
         return ts
 
-#    def runTimeWalk(self,  method):
-#        return self.runTimeWalk(self, 0, self.nevent, 100,  method)
+    def debug_cft(self, i, nch, method, contral):
+    #def debug_cft(self, i, nch, ntrun, method):
+        nrange = contral['zoomRange']
+        #ntrun = contral['truncate']
+        ntrun =int( np.floor(2000/self.dt))
+        points = self.getEventAdjusted(i)
+        f = self.simulateCFT(points[0], points[nch])
+        x0 = self.crossFinder(f(points[0][ntrun:-ntrun]))
+        inte = [points[0][x0+ntrun], points[0][x0+1+ntrun]]
+        indexzoom = points[0][x0+ntrun-nrange:x0+ntrun+nrange]
+        plt.plot(indexzoom, f(indexzoom))
+        plt.axvline(inte[0],color='blue')
 
-    def showTest(self, i):
-        #self.getEventAdjusted(i)
-        delayInterval = 10
-        #xdelay = np.subtract(xx, delayInterval*self.dt)
-        f = self.interpolation(self._loadedData_[0], self._loadedData_[2])
-        fs = self.simulateCFT(i)
-        xx = np.copy(self._loadedData_[0][delayInterval:-delayInterval])
-        #xx = np.copy(self._loadedData_[0])
-        plt.plot(xx, f(xx))
-        #plt.plot(xx, -0.2*f(xx))
-        #plt.plot(xx, f(xdelay))
-        plt.plot(xx, fs(xx))
-        return
-    
+        if contral['check_signalCFT']: 
+            ts = self.signalCFT( points[0], points[nch],ntrun, method)
+            plt.axvline(ts,color='Red')
 
+        if contral['check_getCFTiming']: 
+           tsf = self.getCFTiming( i, method)
+           plt.axvline(tsf[nch-1],color='Orange')
+        plt.show()
+        
+"""
+class timeWalk :
+    def __init__(self):
+        self.scpoe = scopeEmulator()
 
+    def getData(self, filename ):
+        self.scope.loadData(filename)
+        self.scope.sliceEvent()
+
+    def runTimeWalkAna(self, start, end, method):
+        nreport = np.floor((end-start)/100)
+        ts = np.zeros([self.nchannel, r1-r0], dtype = np.float32)
+        timing_start = time.time()
+        for i in range(r0, r1):
+            if i % nreport == 0: print('processed '+str(i)+' events ('+str(np.floor((end-star)/nreport*i))+'%)...')
+            res = scope.getCFTiming(i, method)
+            for j in range(len(res)):
+                ts[j][i-r0] = res[j]
+        timing_stop = time.time()
+        print('time consumed: '+str(timing_stop-timing_start))
+"""
