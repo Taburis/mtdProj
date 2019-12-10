@@ -266,6 +266,20 @@ class scopeEmulator:
         print('time consumed: '+str(timing_stop-timing_start))
         return ts
 
+    def runTimeWalk_peak2peak_filtered(self, r0, r1, nstep,  method, peak, pkrage):
+        ts = np.zeros([self.nchannel, r1-r0], dtype = np.float32)
+        timing_start = time.time()
+        for i in range(r0, r1):
+            if i % nstep == 0: print('processing the '+str(i)+'th events...')
+            points = self.getEventAdjusted(i)
+            if self.peak2peak_cut(peak, pkrage, points[2]): continue
+            res = self.getCFTiming(i, method)
+            for j in range(len(res)):
+                ts[j][i-r0] = res[j]
+        timing_stop = time.time()
+        print('time consumed: '+str(timing_stop-timing_start))
+        return ts
+
     def debug_cft(self, i, nch, method, contral):
     #def debug_cft(self, i, nch, ntrun, method):
         nrange = contral['zoomRange']
@@ -288,24 +302,13 @@ class scopeEmulator:
            plt.axvline(tsf[nch-1],color='Orange')
         plt.show()
         
-"""
-class timeWalk :
-    def __init__(self):
-        self.scpoe = scopeEmulator()
+    def peak2peak_cut(self, cuts, ranges, points):
+        #event = np.array(points, dtype =np.float32)
+        maxvalue = np.amax(points)
+        minvalue = np.amin(points)
+        cc = abs(maxvalue - minvalue )
+        if cc < cuts-ranges: return True
+        elif cc > cuts+ranges: return True
+        return False
 
-    def getData(self, filename ):
-        self.scope.loadData(filename)
-        self.scope.sliceEvent()
-
-    def runTimeWalkAna(self, start, end, method):
-        nreport = np.floor((end-start)/100)
-        ts = np.zeros([self.nchannel, r1-r0], dtype = np.float32)
-        timing_start = time.time()
-        for i in range(r0, r1):
-            if i % nreport == 0: print('processed '+str(i)+' events ('+str(np.floor((end-star)/nreport*i))+'%)...')
-            res = scope.getCFTiming(i, method)
-            for j in range(len(res)):
-                ts[j][i-r0] = res[j]
-        timing_stop = time.time()
-        print('time consumed: '+str(timing_stop-timing_start))
-"""
+    
