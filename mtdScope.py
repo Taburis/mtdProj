@@ -337,19 +337,65 @@ class scopeEmulator:
             if np.amax(np.absolute(points[i]))< trig: return True
         return False
 
-    def charge_convertion(self, r0, r1, chan, trig, channels):
-        integ = {}
+    def charge_convertion(self, r0, r1, chan, trig, channels, do_correction):
+        evt = []
+        integ = [] 
+        cnn = channels
+        cnn.append(chan)
         for i in range(r0, r1):
             points = self.getEventAdjusted(i)
+            if do_correction:
+                self.cnn_baseline_correction(points, cnn)
             if self.trigger_check(points, trig, channels) : continue
             t = points[0]
             signal = points[chan]
-            integ[str(i)] = np.trapz(signal,x = t)
-            #integ.append(np.trapz(signal,x = t))
-        return integ
+            #integ[str(i)] = np.trapz(signal,x = t)
+            evt.append(i)
+            integ.append(np.trapz(signal,x = t))
+        return evt, integ
             
     def baseline(self, points):
         ps = np.absolute(points)
         
 
-    
+    def load_cnn_baseline_finder(self,path):
+        import tensorflow as tf
+        model = tf.keras.models.load_model(path)
+        self.baseline_finder = model
+        self.baseline_finder.summary()
+
+    def normalized_input(self,points):
+        raw = points
+        amin = np.amin(raw)
+        amax = np.amax(raw)
+        sign = 1
+        if abs(amax) < abs(amin):
+            sign = -1
+            raw = np.negative(raw)
+        size0 = raw.shape[0]
+        size = 1000
+        npts = int(size0/size)
+        data = np.zeros(size)
+        start = 0
+        for i in range(size):
+            count = 0
+            for j in range(start, size0):
+                if count == npts: 
+                    start = j
+                    break
+                else :
+                    data[i]+=raw[j]
+                    count+=1
+        amax = np.amax(data)
+        data = np.multiply(data,1./amax)
+        return sign*amax/npts, data
+
+    def cnn_baseline_correction(self,points, channels):
+        for i in channels:
+            input_data = points[i]
+            shape = input_data.shape
+            scale, data = self.normalized_input(input_data)
+            base = self.baseline_finder.predict(data.reshape(1, 1000,1))
+            base = scale*base
+            points[i] = np.subtract(points[i], base).reshape(shape[0])
+
