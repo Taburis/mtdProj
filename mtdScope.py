@@ -82,6 +82,7 @@ class scopeEmulator:
         #time_start = time_check
 
         return points
+
     
     def interpolation(self, x, y):
         return InterpolatedUnivariateSpline(x, y)
@@ -310,5 +311,45 @@ class scopeEmulator:
         if cc < cuts-ranges: return True
         elif cc > cuts+ranges: return True
         return False
+
+    def integration_over_events(self, r0, r1, channel):
+        integ = []
+        for i in range(r0, r1):
+            points = self.getEventAdjusted(i)
+            t = points[0]
+            signal = points[channel]
+            integ.append(np.trapz(signal,x = t))
+        return integ
+    
+    def showEvent(self, i, channels):
+        points = self.getEventAdjusted(i)
+        p0 = np.zeros((self.nsamples,1))
+        for i in channels:
+            plt.plot(points[0], points[i], label='channel: '+str(i))
+        plt.plot(points[0], p0, '--')
+        plt.xlabel('time (ps)')
+        plt.legend(loc='upper right')
+        plt.show()
+
+    def trigger_check(self, points, trig, channels):
+        #return 1 for skip
+        for i in channels:
+            if np.amax(np.absolute(points[i]))< trig: return True
+        return False
+
+    def charge_convertion(self, r0, r1, chan, trig, channels):
+        integ = {}
+        for i in range(r0, r1):
+            points = self.getEventAdjusted(i)
+            if self.trigger_check(points, trig, channels) : continue
+            t = points[0]
+            signal = points[chan]
+            integ[str(i)] = np.trapz(signal,x = t)
+            #integ.append(np.trapz(signal,x = t))
+        return integ
+            
+    def baseline(self, points):
+        ps = np.absolute(points)
+        
 
     
