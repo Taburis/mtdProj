@@ -11,20 +11,42 @@ class scopeEmulator:
 
     def __init__(self):
         return
-        
+#    def loadData(self, path):
+#        self._f0 = h5py.File(path, 'r')
+#        self.attri = self._f0.attrs['waveform'].tolist()
+#        #self.attri = self._f0.attrs['Waveform Attributes'].tolist()
+#        self.keys = list(self._f0.keys())
+#        self._db_ = self._f0[self.keys[0]]
+#        self.nsamples = self.attri[1]
+#        self.dt = self.attri[3]*1.0e12 # converting to the ps unit
+#        self.yscale = self.attri[5]
+#        self.nchannel = len(self._db_)
+#        if(self.nchannel ==0 ): self.size = 0
+#        else: self.size = len(self._db_[0])
+#        if(self.size ==0 ): self.nevent = 0
+#        else: self.nevent = int(self.size/self.nsamples)
+
     def loadData(self, path):
-        self._f0 = h5py.File(path, 'r')
-        self.attri = self._f0.attrs['Waveform Attributes'].tolist()
-        self.keys = list(self._f0.keys())
-        self._db_ = self._f0[self.keys[0]]
-        self.nsamples = self.attri[1]
-        self.dt = self.attri[3]*1.0e12 # converting to the ps unit
-        self.yscale = self.attri[5]
-        self.nchannel = len(self._db_)
-        if(self.nchannel ==0 ): self.size = 0
-        else: self.size = len(self._db_[0])
-        if(self.size ==0 ): self.nevent = 0
-        else: self.nevent = int(self.size/self.nsamples)
+        self._f0=h5py.File(path, 'r')
+        self._db_ = self._f0['waveform']
+        self.attrs = self._db_.attrs
+        self.nsamples = self.attrs['nPt']
+        self.dt = self.attrs['dt']*1.0e12
+        self.nevent = int(np.array(self._db_).shape[1]/self.nsamples)
+        self.scale_channels = []
+        self.yscale = []
+        self.zeros = []
+        self.bit_size = []
+        self.nchannel=0 
+        for i in range(4):
+            if not self.attrs['chmask'][i] : continue
+            self.scale_channels.append(self.attrs['vertical'+str(i+1)])
+            self.nchannel=self.nchannel+1
+        for i in range(self.nchannel):
+            self.yscale.append(self.scale_channels[i][0])
+            self.zeros.append(self.scale_channels[i][1])
+            self.bit_size.append(self.scale_channels[i][2])
+
         
     def totalEvent(self): return self.nevent
 
@@ -52,7 +74,7 @@ class scopeEmulator:
         points = self.getEvent(i)
         scaledPoints = []
         for i in range(0,self.nchannel):
-            scaledPoints.append(np.multiply(points[i], self.yscale[i], dtype = np.float64))
+            scaledPoints.append(np.multiply(np.subtract(points[i], self.zeros[i]),self.yscale[i], dtype = np.float64))
 
         #time_check = time.time()
         #print("scaling consume:",time_check-time_start)
@@ -61,21 +83,17 @@ class scopeEmulator:
         return scaledPoints
     
     def getEventAdjusted(self, i):
-        #time_start = time.time()
         ys = self.getEventScaled(i)
-        #time_check = time.time()
-        #print("reading 1 consume:",time_check-time_start)
-        #time_start = time_check
-
-        nbins = int(np.floor(1000/self.dt))
-        
+#        #time_check = time.time()
+#        #print("reading 1 consume:",time_check-time_start)
+#        #time_start = time_check
+#
+#        nbins = int(np.floor(1000/self.dt))
+#        
         points=[]
         points.append(self.timeAxis)
-        for i in range(1,self.nchannel+1):
-            points.append(ys[i-1])
-            mean = points[i][0:nbins].mean()
-            points[i] = np.subtract(points[i], mean)
-        self._loadedData_ = points
+        for i in range(self.nchannel):
+            points.append(ys[i])
 
         #time_check = time.time()
         #print("reading 2 consume:",time_check-time_start)
@@ -254,13 +272,18 @@ class scopeEmulator:
             ts.append(res)
         return ts
 
-    def runTimeWalk(self, r0, r1, nstep,  method):
+    def runTimeWalk(self, r0, r1, nstep,  method, error_tolerance = 500):
         # step shows report every nstep events processed
         ts = np.zeros([self.nchannel, r1-r0], dtype = np.float32)
         timing_start = time.time()
+        position = 0
         for i in range(r0, r1):
             if i % nstep == 0: print('processing the '+str(i)+'th events...')
             res = self.getCFTiming(i, method)
+#            if position !=0 and abs(abs(res[1]-res[0])-position) > error_tolerance: 
+#                print("error occurs at:",i)
+#                break
+#            else: position = abs(res[1]-res[0])
             for j in range(len(res)):
                 ts[j][i-r0] = res[j]
         timing_stop = time.time()
@@ -282,7 +305,7 @@ class scopeEmulator:
         return ts
 
     def debug_cft(self, i, nch, method, contral):
-    #def debug_cft(self, i, nch, ntrun, method):
+    #def 50debug_cft(self, i, nch, ntrun, method):
         nrange = contral['zoomRange']
         #ntrun = contral['truncate']
         ntrun =int( np.floor(2000/self.dt))
