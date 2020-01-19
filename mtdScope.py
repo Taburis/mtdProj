@@ -36,6 +36,7 @@ class scopeEmulator:
         self.scale_channels = []
         self.yscale = []
         self.zeros = []
+        self.badEvent = False
         self.bit_size = []
         self.nchannel=0 
         for i in range(4):
@@ -64,6 +65,7 @@ class scopeEmulator:
         self.makeTimeAxis()
 
     def getEvent(self, i):
+        self.badEvent = False
         #only return the y value for the event, need to slice the events first
         if(not self.isEventValid(i)): return []
         _data_=self.events[i]
@@ -185,13 +187,17 @@ class scopeEmulator:
         # return the cross index in array y
         jmin = y.argmin()
         jmax = y.argmax()
-        if(jmax<jmin):
-            holder=jmax
-            jmax=jmin
-            jmin=holder
+        #if(jmax<jmin):
+        #    holder=jmax
+        #    jmax=jmin
+        #    jmin=holder
         x = np.where(np.diff(np.sign(y)))[0]
-        arr1 = np.where((x < jmax) & (x > jmin))[0]
-        return int(x[arr1[0]])
+        arr1 = np.where(x<jmax)
+        if len(arr1[0]) == 0 : 
+            self.badEvent = True
+            return 0
+        arr1 = arr1[0][-1]
+        return int(x[arr1])
 
     def leftJumpScanFast(self,x, y):
         nmax = 50
@@ -233,6 +239,7 @@ class scopeEmulator:
         #inte = self.crossRegion(f,n0)
         yy = f(x[ntrun:-ntrun])
         x0 = self.crossFinder(yy) 
+        if self.badEvent : return 0
         inte = [x[x0+ntrun], x[x0+1+ntrun]]
         if method == 'newton':
             res = optimize.newton(lambda x : f(x), x0=(inte[0]+inte[1])/2)
@@ -248,10 +255,12 @@ class scopeEmulator:
     def getCFTiming(self, i, method):
         #time_start = time.time()
         points = self.getEventYNormalized(i)
-        ntrun =int( np.floor(2000/self.dt))
+        ntrun =int(np.floor(2000/self.dt))
         ts = []
         for channel in range(1, self.nchannel+1):
             res = self.signalCFT(points[0], points[channel], ntrun, method)
+            if self.badEvent : 
+                return []
             ts.append(res)
         return ts
 
@@ -283,6 +292,9 @@ class scopeEmulator:
         for i in range(r0, r1):
             if i % nstep == 0: print('processing the '+str(i)+'th events...')
             res = self.getCFTiming(i, method)
+            if self.badEvent: 
+                print("collapsed at event:",i,"skipped")
+                continue
             for j in range(len(res)):
                 ts[j][i-r0] = res[j]
         timing_stop = time.time()
@@ -307,7 +319,7 @@ class scopeEmulator:
     #def 50debug_cft(self, i, nch, ntrun, method):
         #ntrun = contral['truncate']
         ntrun =int( np.floor(2000/self.dt))
-        points = self.getEventAdjusted(i)
+        points = self.getEventYNormalized(i)
         f = self.simulateCFT(points[0], points[nch])
         x0 = self.crossFinder(f(points[0][ntrun:-ntrun]))
         inte = [points[0][x0+ntrun], points[0][x0+1+ntrun]]
