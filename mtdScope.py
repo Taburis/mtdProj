@@ -101,6 +101,15 @@ class scopeEmulator:
 
         return points
 
+    def normalizeY(self, points):
+        scale = points[np.argmax(np.abs(points))]
+        return np.multiply(points, 1.0/scale)
+
+    def getEventYNormalized(self, i):
+        points = self.getEventAdjusted(i)
+        for i in range(self.nchannel):
+            points[i+1] = self.normalizeY(points[i+1])
+        return points
     
     def interpolation(self, x, y):
         return InterpolatedUnivariateSpline(x, y)
@@ -145,7 +154,7 @@ class scopeEmulator:
         return intpFunc
     
     def simulateCFT(self,xs, ys):
-        frac = 0.3
+        frac = 0.5
         delayInterval = int(1000/self.dt) # delay 1000 ps
         f = self.interpolation(xs, ys)
         def simCFT( x):
@@ -238,18 +247,12 @@ class scopeEmulator:
 
     def getCFTiming(self, i, method):
         #time_start = time.time()
-        points = self.getEventAdjusted(i)
-        #time_check = time.time()
-        #print("reading consume:",time_start-time_check)
-        #time_start = time_check
+        points = self.getEventYNormalized(i)
         ntrun =int( np.floor(2000/self.dt))
         ts = []
-        for channel in range(1, 3):
+        for channel in range(1, self.nchannel+1):
             res = self.signalCFT(points[0], points[channel], ntrun, method)
             ts.append(res)
-        #time_check = time.time()
-        #print("calculation consume:",time_start-time_check)
-        #time_start = time_check
         return ts
 
     def getCFTiming2(self, i, method):
@@ -280,10 +283,6 @@ class scopeEmulator:
         for i in range(r0, r1):
             if i % nstep == 0: print('processing the '+str(i)+'th events...')
             res = self.getCFTiming(i, method)
-#            if position !=0 and abs(abs(res[1]-res[0])-position) > error_tolerance: 
-#                print("error occurs at:",i)
-#                break
-#            else: position = abs(res[1]-res[0])
             for j in range(len(res)):
                 ts[j][i-r0] = res[j]
         timing_stop = time.time()
@@ -304,9 +303,8 @@ class scopeEmulator:
         print('time consumed: '+str(timing_stop-timing_start))
         return ts
 
-    def debug_cft(self, i, nch, method, contral):
+    def debug_cft(self, i, nch, method, nrange):
     #def 50debug_cft(self, i, nch, ntrun, method):
-        nrange = contral['zoomRange']
         #ntrun = contral['truncate']
         ntrun =int( np.floor(2000/self.dt))
         points = self.getEventAdjusted(i)
@@ -317,13 +315,11 @@ class scopeEmulator:
         plt.plot(indexzoom, f(indexzoom))
         plt.axvline(inte[0],color='blue')
 
-        if contral['check_signalCFT']: 
-            ts = self.signalCFT( points[0], points[nch],ntrun, method)
-            plt.axvline(ts,color='Red')
+        ts = self.signalCFT( points[0], points[nch],ntrun, method)
+        plt.axvline(ts,color='Red')
 
-        if contral['check_getCFTiming']: 
-           tsf = self.getCFTiming( i, method)
-           plt.axvline(tsf[nch-1],color='Orange')
+        tsf = self.getCFTiming( i, method)
+        plt.axvline(tsf[nch-1],color='Orange')
         plt.show()
         
     def peak2peak_cut(self, cuts, ranges, points):
