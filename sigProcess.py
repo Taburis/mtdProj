@@ -3,7 +3,6 @@ import numpy as np
 from scipy import optimize
 from scipy.interpolate import Rbf, InterpolatedUnivariateSpline
 import matplotlib.pyplot as plt
-from scipy.interpolate import lagrange
 import time
 
 def normalizeY(points):
