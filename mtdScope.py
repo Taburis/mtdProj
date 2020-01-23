@@ -48,7 +48,6 @@ class scopeEmulator:
             self.zeros.append(self.scale_channels[i][1])
             self.bit_size.append(self.scale_channels[i][2])
 
-        
     def totalEvent(self): return self.nevent
 
     def makeTimeAxis(self):
