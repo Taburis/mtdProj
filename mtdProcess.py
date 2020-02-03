@@ -5,18 +5,6 @@ import numpy as np
 import os
 import re
 
-def getCFT(infile, trigger, channels, nrep = 1000):
-    se = scopeEmulator()
-    se.loadData(infile)
-    se.sliceEvent()
-    ts = se.runTimeWalk(r0=0,r1=se.nevent, nstep = nrep, method='linear')
-    std = {}
-    dts = []
-    for t in channels:
-        dts.append(np.trim_zeros(np.subtract(ts[t-1],ts[trigger-1])))
-        std[str(t)] = dts[-1].std()
-    return dts, std
-
 def extract_number(istring):
     z = re.search("\d+",istring)
     return int(z.group())
@@ -39,3 +27,19 @@ def run_list_CFT(regex, folder, labelRule, trigger, channel):
        xs.append(x)
        ys.append(std[str(channel[0])])
     return xs, ys
+
+class mtdProcess:
+    def __init__(self, infile):
+        self.scope = scopeEmulator()
+        self.scope.loadData(infile)
+        self.scope.sliceEvent()
+        self.output = ''
+        self.buffer = {}
+        self.transimpedence = -44000
+
+    def charge_conversion(self, channel, bkg = [0, 1000]):
+        self.scope.bkg = bkg
+        chg, bkg = self.scope.dist_waveform_integration_bkgSub(channel)
+        self.buffer['bkg_check_channel1'] = bkg
+        self.buffer['charge_channel1'] = np.multiply(chg, self.transimpedence*1e-11*1e15)
+

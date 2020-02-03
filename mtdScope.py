@@ -2,31 +2,20 @@ import h5py
 import numpy as np
 from scipy import optimize
 from scipy.interpolate import interp1d
+from scipy import integrate
 from scipy.interpolate import Rbf, InterpolatedUnivariateSpline
 import matplotlib.pyplot as plt
 from scipy.interpolate import lagrange
 import time
+from tqdm import tqdm
 
 class scopeEmulator:
 
     def __init__(self):
         return
-#    def loadData(self, path):
-#        self._f0 = h5py.File(path, 'r')
-#        self.attri = self._f0.attrs['waveform'].tolist()
-#        #self.attri = self._f0.attrs['Waveform Attributes'].tolist()
-#        self.keys = list(self._f0.keys())
-#        self._db_ = self._f0[self.keys[0]]
-#        self.nsamples = self.attri[1]
-#        self.dt = self.attri[3]*1.0e12 # converting to the ps unit
-#        self.yscale = self.attri[5]
-#        self.nchannel = len(self._db_)
-#        if(self.nchannel ==0 ): self.size = 0
-#        else: self.size = len(self._db_[0])
-#        if(self.size ==0 ): self.nevent = 0
-#        else: self.nevent = int(self.size/self.nsamples)
 
     def loadData(self, path):
+        self.file_name=path.split('/')[-1]
         self._f0=h5py.File(path, 'r')
         self._db_ = self._f0['waveform']
         self.attrs = self._db_.attrs
@@ -39,6 +28,7 @@ class scopeEmulator:
         self.badEvent = False
         self.bit_size = []
         self.nchannel=0 
+        self.trigger = self.no_trigger
         for i in range(4):
             if not self.attrs['chmask'][i] : continue
             self.scale_channels.append(self.attrs['vertical'+str(i+1)])
@@ -50,8 +40,10 @@ class scopeEmulator:
 
     def totalEvent(self): return self.nevent
 
+    def no_trigger(self, points): return 1 # always trigger
+
     def makeTimeAxis(self):
-        self.timeAxis = np.array([nx*self.dt for nx in range(self.nsamples)], dtype=np.int64)
+        self.t = np.array([nx*self.dt for nx in range(self.nsamples)], dtype=np.int64)
     
     def isEventValid(self, i):
         if i > self.nevent: 
@@ -82,7 +74,12 @@ class scopeEmulator:
         #time_start = time_check
 
         return scaledPoints
-    
+  
+    def triggeredEvent(self, i):
+        points = self.getEventAdjusted(i)
+        if self.trigger(points): return points, True
+        else : return points, False
+   
     def getEventAdjusted(self, i):
         ys = self.getEventScaled(i)
 #        #time_check = time.time()
@@ -92,7 +89,7 @@ class scopeEmulator:
 #        nbins = int(np.floor(1000/self.dt))
 #        
         points=[]
-        points.append(self.timeAxis)
+        points.append(self.t)
         for i in range(self.nchannel):
             points.append(ys[i])
 
@@ -114,45 +111,6 @@ class scopeEmulator:
     
     def interpolation(self, x, y):
         return InterpolatedUnivariateSpline(x, y)
-    
-    def lagrangeInterpolation(self,x,y):
-        return lagrange(x,y)
-    
-    def allType2Array(self, x):
-        x = np.asarray(x)
-        scalar_input= True
-        if x.ndim == 0:
-            x = x[None]
-            scalar_input=False
-        if scalar_input :
-            return np.squeeze(x)
-        return x
-    
-    def interpolationSampling(self, xs, ys):
-        sampleRange = 10
-        cutFreq = 1.0
-        dt = self.dt
-        def intpFunc(x):
-            x = self.allType2Array(x)
-           # if( x.any() < xs[0] or x.any() > xs[-1]):
-           #     raise ValueError('Error: x value exceeded the inteploated range!')
-            index = np.copy(np.floor((x-xs[0])/dt))
-            
-            res = np.zeros(x.shape, dtype = np.float64)
-            for i in range(0, x.shape[0]):
-                sampleMin = index[i]-sampleRange
-                if sampleMin < 0: sampleMin = 0
-                sampleMax = index[i]+sampleRange
-                if sampleMax > len(xs): sampleMax = len(xs)
-                for itera in range(int(sampleMin), int(sampleMax)):
-                    for ifreq in range(0, int(cutFreq)):
-                        arg = (index[i]- itera)*cutFreq
-                        #print('arge is: ',arg)
-                        res[i] += np.sinc(arg)*ys[itera]/cutFreq
-                        #print(res[i])
-            return res
-         
-        return intpFunc
     
     def simulateCFT(self,xs, ys):
         frac = 0.5
@@ -186,10 +144,6 @@ class scopeEmulator:
         # return the cross index in array y
         jmin = y.argmin()
         jmax = y.argmax()
-        #if(jmax<jmin):
-        #    holder=jmax
-        #    jmax=jmin
-        #    jmin=holder
         x = np.where(np.diff(np.sign(y)))[0]
         arr1 = np.where(x<jmax)
         if len(arr1[0]) == 0 : 
@@ -198,44 +152,8 @@ class scopeEmulator:
         arr1 = arr1[0][-1]
         return int(x[arr1])
 
-    def leftJumpScanFast(self,x, y):
-        nmax = 50
-        stat=np.array(y[0:nmax], dtype =np.float32)
-        std = stat.std()
-        mean = stat.mean()
-        n0 = self.leftJumpScanHalfSearch( y, mean, std)
-        return self.leftJumpScanPrecise( n0, y, mean, std)
-
-    
-    def leftJumpScan(self, x, y):
-        #scan the signal jump from left to right, added the argument x for debug reason
-        nmax = 50
-        stat=np.array(y[0:nmax], dtype =np.float32)
-        std = stat.std()
-        mean = stat.mean()
-        index = -1
-        for i in range(len(y)):
-            if(i> nmax):
-                dev = abs(mean-y[i])
-                if( dev > 15*std): 
-                    return i
-        return -1
-    
-    def crossRegion(self, f, start):
-        a0 = f(start*self.dt)
-        for i in range(start, self.nsamples):
-            #print(a0, f(i*self.dt))
-            a1 = f(i*self.dt)
-            if( a0*a1< 0 ): return [start, i]
-            else :
-                a0 = a1
-                start = i
-        return [start, -1]
-
-
     def signalCFT(self, x, y, ntrun, method):
         f = self.simulateCFT(x, y)
-        #inte = self.crossRegion(f,n0)
         yy = f(x[ntrun:-ntrun])
         x0 = self.crossFinder(yy) 
         if self.badEvent : return 0
@@ -260,26 +178,6 @@ class scopeEmulator:
             res = self.signalCFT(points[0], points[channel], ntrun, method)
             if self.badEvent : 
                 return []
-            ts.append(res)
-        return ts
-
-    def getCFTiming2(self, i, method):
-        points = self.getEventAdjusted(i)
-        ts = []
-        for channel in range(1, 3):
-            n0 = self.leftJumpScan(points[0], points[channel])
-            if n0 < 0 : raise ValueError('Failed to find jump point')
-            f = self.simulateCFT(points[0], points[channel])
-            inte = self.crossRegion(f,n0)
-            if method == 'newton':
-                res = optimize.newton(lambda x : f(x), x0=self.dt*(inte[0]+inte[1])/2)
-            elif method == 'linear':
-                x1 = inte[0]*self.dt
-                x2 = inte[1]*self.dt
-                k = (f(x2)-f(x1))/(x2-x1)
-                res = x1-f(x1)/k
-            else: 
-                raise ValueError('No method: '+method+' defined in getCFTiming function')
             ts.append(res)
         return ts
 
@@ -367,65 +265,112 @@ class scopeEmulator:
             if np.amax(np.absolute(points[i]))< trig: return True
         return False
 
-    def charge_convertion(self, r0, r1, chan, trig, channels, do_correction):
+    def charge_convertion(self, r0, r1, chan,trigger, do_correction):
         evt = []
         integ = [] 
-        cnn = channels
-        cnn.append(chan)
+        t = self.t
         for i in range(r0, r1):
             points = self.getEventAdjusted(i)
             if do_correction:
-                self.cnn_baseline_correction(points, cnn)
-            if self.trigger_check(points, trig, channels) : continue
-            t = points[0]
+                self.cnn_baseline_correction(points)
+            if trigger(points) : continue
             signal = points[chan]
+            #print("len(t): ",len(t))
+            #print("shape signal: ",signal.shape)
             #integ[str(i)] = np.trapz(signal,x = t)
             evt.append(i)
             integ.append(np.trapz(signal,x = t))
         return evt, integ
             
-    def baseline(self, points):
-        ps = np.absolute(points)
-        
 
     def load_cnn_baseline_finder(self,path):
-        import tensorflow as tf
-        model = tf.keras.models.load_model(path)
-        self.baseline_finder = model
-        self.baseline_finder.summary()
+        import baseline_cnn_model as bf
+        self.baseline_model = bf.baseline_finder(path)
 
-    def normalized_input(self,points):
-        raw = points
-        amin = np.amin(raw)
-        amax = np.amax(raw)
-        sign = 1
-        if abs(amax) < abs(amin):
-            sign = -1
-            raw = np.negative(raw)
-        size0 = raw.shape[0]
-        size = 1000
-        npts = int(size0/size)
-        data = np.zeros(size)
-        start = 0
-        for i in range(size):
-            count = 0
-            for j in range(start, size0):
-                if count == npts: 
-                    start = j
-                    break
-                else :
-                    data[i]+=raw[j]
-                    count+=1
-        amax = np.amax(data)
-        data = np.multiply(data,1./amax)
-        return sign*amax/npts, data
+    def cnn_baseline_correction(self,points):
+        for i in range(1, self.nchannel+1):
+            points[i] = self.baseline_model.baseline_correction(points[i])
 
-    def cnn_baseline_correction(self,points, channels):
-        for i in channels:
-            input_data = points[i]
-            shape = input_data.shape
-            scale, data = self.normalized_input(input_data)
-            base = self.baseline_finder.predict(data.reshape(1, 1000,1))
-            base = scale*base
-            points[i] = np.subtract(points[i], base).reshape(shape[0])
+    def trigEvent_baseline_corrected(self, i):
+        points, trig = self.triggeredEvent(i)
+        if trig : self.cnn_baseline_correction(points)
+        return points, trig
 
+    def baseline_check(self, i, n):
+        points0 = self.getEventAdjusted(i)
+        points1 = self.getEventAdjusted(i)
+        self.cnn_baseline_correction(points1)
+        plt.plot(points0[0], points0[n], label = 'original')
+        plt.plot(points0[0], points1[n],label = 'corrected')
+        line = np.linspace(points0[0][0], points0[0][-1], 100)
+        zeros = np.zeros(100)
+        plt.plot(line, zeros, '--',color='red',label='baseline')
+        plt.legend(loc='best')
+
+    def showWaveForm(self, channel):
+        fig, ax1 = plt.subplots(dpi=180)
+        for i in tqdm(range(int(self.nevent))):
+            points, trigbit= self.triggeredEvent(i)
+            if trigbit: 
+                plt.plot(self.t, points[channel])
+        ax1.set(xlabel='time (ps)', ylabel='amplitude',
+                title='Wave Form of channel '+str(channel))
+        #plt.text(self.t[1], ax1.get_ylim()[0], self.file_name, color='red')
+        plt.show()
+
+    def showWaveForm_baseline_corrected(self, channel):
+        fig, ax1 = plt.subplots(dpi=180)
+        for i in tqdm(range(int(self.nevent))):
+            points, trigbit= self.trigEvent_baseline_corrected(i)
+            if trigbit: 
+                plt.plot(self.t, points[channel])
+        ax1.set(xlabel='time (ps)', ylabel='amplitude',
+                title='Wave Form of channel '+str(channel))
+        plt.show()
+
+    def dist_waveform_integration(self, channel,number = -1, show = False):
+        chg = []
+        for i in tqdm(range(int(self.nevent))):
+            charge = 0
+            points, tig = self.triggeredEvent(i)
+            y0 = points[channel][0:number]
+            t0 = points[0][0:number]
+            if tig: chg.append(np.trapz(y0,x = t0))
+        if show:
+            plt.hist(chg, bins = 40)
+            plt.show()
+        return chg
+
+    def dist_waveform_integration_bkgSub(self, channel,number = -1, show = False):
+        chg = []
+        bkg = []
+        for i in tqdm(range(int(self.nevent))):
+            charge = 0
+            points, tig = self.triggeredEvent(i)
+            print([self.bkg[0],self.bkg[1]])
+            mean = (points[channel][self.bkg[0],self.bkg[1]]).mean()
+            t0 = points[0][self.bkg[0],self.bkg[1]]
+            if tig: 
+                y1 = np.subtract(points, mean)
+                bkg.append(np.trapz(y1[self.bkg[0],self.bkg[1]],x = self.t[self.bkg[0],self.bkg[1]]))
+                chg.append(np.trapz(y1[0:number],x = self.t[0:number]))
+        if show:
+            plt.hist(chg, bins = 40)
+            plt.show()
+        return chg, bkg
+
+
+    def dist_waveform_integration2(self, channel, callf, show = False):
+        chg = []
+        for i in tqdm(range(int(self.nevent))):
+            charge = 0
+            points, tig = callf(i)
+
+            y = points[channel]
+            if tig: chg.append(np.trapz(y,x = points[0]))
+        if show:
+            plt.hist(chg, bins = 40)
+            plt.show()
+        return chg
+
+        
