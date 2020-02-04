@@ -316,7 +316,7 @@ class scopeEmulator:
         ax1.set(xlabel='time (ps)', ylabel='amplitude',
                 title='Wave Form of channel '+str(channel))
         #plt.text(self.t[1], ax1.get_ylim()[0], self.file_name, color='red')
-        plt.show()
+        #plt.show()
 
     def showWaveForm_baseline_corrected(self, channel):
         fig, ax1 = plt.subplots(dpi=180)
@@ -347,12 +347,11 @@ class scopeEmulator:
         for i in tqdm(range(int(self.nevent))):
             charge = 0
             points, tig = self.triggeredEvent(i)
-            print([self.bkg[0],self.bkg[1]])
-            mean = (points[channel][self.bkg[0],self.bkg[1]]).mean()
-            t0 = points[0][self.bkg[0],self.bkg[1]]
+            mean = (points[channel][self.bkg[0]:self.bkg[1]]).mean()
+            t0 = points[0][self.bkg[0]:self.bkg[1]]
             if tig: 
-                y1 = np.subtract(points, mean)
-                bkg.append(np.trapz(y1[self.bkg[0],self.bkg[1]],x = self.t[self.bkg[0],self.bkg[1]]))
+                y1 = np.subtract(points[channel], mean)
+                bkg.append(np.trapz(y1[self.bkg[0]:self.bkg[1]],x = self.t[self.bkg[0]:self.bkg[1]]))
                 chg.append(np.trapz(y1[0:number],x = self.t[0:number]))
         if show:
             plt.hist(chg, bins = 40)
