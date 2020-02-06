@@ -12,6 +12,7 @@ from tqdm import tqdm
 class scopeEmulator:
 
     def __init__(self):
+        self.trigger = self.no_trigger
         return
 
     def loadData(self, path):
@@ -28,7 +29,6 @@ class scopeEmulator:
         self.badEvent = False
         self.bit_size = []
         self.nchannel=0 
-        self.trigger = self.no_trigger
         for i in range(4):
             if not self.attrs['chmask'][i] : continue
             self.scale_channels.append(self.attrs['vertical'+str(i+1)])
