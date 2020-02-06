@@ -108,6 +108,10 @@ class jitter_analyzer(xp.analyzer):
         self.dt21 = []
         self.dt31 = []
         self.dt32 = []
+        self.dt123 = []
+        self.dt1 = []
+        self.dt2 = []
+        self.dt3 = []
 
     def run(self):
         self.jitter_beamSetup_v0(self.data)
@@ -123,19 +127,30 @@ class jitter_analyzer(xp.analyzer):
         self.dt21.append(time[1]-time[0])
         self.dt32.append(time[2]-time[1])
         self.dt31.append(time[2]-time[0])
+        self.dt123.append((time[2]+time[0])/2-time[1])
+        self.dt1.append(time[0])
+        self.dt2.append(time[1])
+        self.dt3.append(time[2])
 
 
     def end(self):
         sig21 = np.array(self.dt21).std()
         sig31 = np.array(self.dt31).std()
         sig32 = np.array(self.dt32).std()
+        sig123 = np.array(self.dt123).std()
+        self.keep('sig1', np.array(self.dt1).std())
+        self.keep('sig2', np.array(self.dt2).std())
+        self.keep('sig3', np.array(self.dt3).std())
         self.keep('dt21', self.dt21)
         self.keep('dt31', self.dt31)
         self.keep('dt32', self.dt32)
+        self.keep('dt123', self.dt123)
         self.keep('sig21', sig21)
         self.keep('sig31', sig31)
         self.keep('sig32', sig32)
-        self.keep('sig2', (sig21+sig31+sig32)/2)
+        self.keep('sig123', sig123)
+        #self.keep('cal2', (sig32**2+sig21**2)**0.5/2)
+        self.keep('cal2', ((sig21**2-sig31**2+sig32**2)/2)**0.5)
 
         self.dt21.clear()
         self.dt31.clear()
@@ -182,6 +197,7 @@ class func_xlabel_dqm(xp.dqm):
             self.draw(key)
         ax.set(xlabel =self.kwargs['xlabel'], ylabel =self.kwargs['ylabel'], title = self.kwargs['title'])
         plt.legend(loc='best')
+        #plt.ylim(60,130)
         plt.grid(True)
         self.keep_fig()
 
@@ -195,12 +211,20 @@ def HV_xlabel(istring):
 dqm_charge = hist_dist_dqm('dqm_charge', x= 'charge_dist', title = 'charge distribution', xlabel ='charge (fC)', ylabel='Occurance')
 dqm_charge.label = HV_label
 
-dqm_jitter = func_xlabel_dqm('dqm_sig21', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='jitter (ps)')
+dqm_jitter = func_xlabel_dqm('dqm_cal2', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='jitter (ps)')
 dqm_jitter.add_variable('sig31', 'tch3-tch1')
 dqm_jitter.add_variable('sig21', 'tch2-tch1')
 dqm_jitter.add_variable('sig32', 'tch3-tch2')
-#dqm_jitter.add_variable('sig2', 'sig2')
+dqm_jitter.add_variable('sig123', '(tch3+tch1)/2-tch2')
+dqm_jitter.add_variable('cal2', 'drived ch2')
 dqm_jitter.label = HV_xlabel
+
+dqm_jitter_eachCh = func_xlabel_dqm('dqm_sig', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='jitter (ps)')
+dqm_jitter_eachCh.add_variable('sig1', 'tch1')
+dqm_jitter_eachCh.add_variable('sig2', 'tch2')
+dqm_jitter_eachCh.add_variable('sig3', 'tch3')
+#dqm_jitter.add_variable('sig2', 'sig2')
+dqm_jitter_eachCh.label = HV_xlabel
 
 an_jitter_v0 = jitter_analyzer()
 an_charge_v0 = charge_analyzer(channel=[2],transimp = -4400, bkg_range=[0, 400])
