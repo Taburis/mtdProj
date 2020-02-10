@@ -41,6 +41,11 @@ class analyzer:
     def keep(self, key, data):
         self.buffer[key] = copy.copy(data)
 
+    def clone(self):
+        return copy.deepcopy(self)
+    def clear(self):
+        self.__dict__.clear()
+
 class dqm(analyzer):
     def __init__(self, name, **kwargs):
         super(dqm, self).__init__(name, **kwargs)
@@ -55,7 +60,8 @@ class dqm(analyzer):
     def query(self, group):
         data = self.processor.output_file[group]
         for key in self.query_list:
-            getattr(self,key)[group]= data[key] 
+            try : getattr(self,key)[group]= data[key] 
+            except: print('Variable:',key,'not exits, skipped')
 
     def keep_fig(self):
         self.processor.dqm.savefig()
@@ -67,6 +73,7 @@ class process:
         self.sequence = []
         self.endSequence = []
         self.buffer_group = []
+        self.waveform_check_list = []
             
     def run(self):
         self.output_file = h5py.File(self.__name__+'_output.h5','w')
@@ -85,6 +92,11 @@ class process:
                 self.load_buffer(f_name, ana)
             self.buffer_group.append(f_name)
         self.dqm = PdfPages(self.__name__+'_dqm.pdf')
+        for i in self.waveform_check_list:
+            self.scope.loadData(self.flist[-1])
+            self.scope.sliceEvent()
+            self.waveform_check(i)
+            self.dqm.savefig()
         for dqm in self.dqmSequence:
             dqm.link(self)
             # a group is a input file
@@ -92,7 +104,8 @@ class process:
                 dqm.query(group)
             dqm.run()
         self.dqm.close()
-        self.output_file.close()
+        #self.output_file.close()
+        #self.clean()
     
     def path(self, array):
         self.sequence = []
@@ -129,4 +142,10 @@ class process:
                 self.dqmSequence.append(ele)
         else : self.dqmSequence.append(array)
 
-
+    def clean(self):
+        self.buffer_group = []
+        self.waveform_check_list = []
+        for a in self.sequence:
+            a.clear()
+        for a in self.endSequence:
+            a.clear()

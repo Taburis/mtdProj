@@ -56,12 +56,17 @@ class trigger:
         if np.amax(ps) > self.trig : return False
         return True
 
-
     def trig_single_channel(self, points, i):
         ps = points[i]
         if np.amax(np.absolute(ps))<self.trig : return False
         elif np.amax(np.absolute(ps))>self.max : return False
         elif np.amax(ps) > self.trig : return False
+        return True
+
+    def trigger_abs_single(self, points, i):
+        ps = points[i]
+        if np.amax(np.absolute(ps))<self.trig : return False
+#        elif np.amax(np.absolute(ps))>self.max : return False
         return True
 
     def trigger_all3(self, points):
@@ -70,16 +75,45 @@ class trigger:
         trig2 = self.trig_single_channel(points, 2)
         return trig1 and trig3 and trig2
 
+    def trigger_all4(self, points):
+        trig1 = self.trig_single_channel(points, 1)
+        trig2 = self.trig_single_channel(points, 2)
+        trig3 = self.trig_single_channel(points, 3)
+        trig4 = self.trigger_abs_single (points, 4)
+        return trig1 and trig2 and trig3 and trig4
+
+    def trig_check(self, ps):
+        if np.amax(np.absolute(ps))<self.trig : return False
+        elif np.amax(np.absolute(ps))>self.max : return False
+        elif np.amax(ps) > self.trig : return False
+        return True
+
+    def trigger_range_ch1(self, points):
+        trig2 = True
+        trig3 = True
+        if self.trig_single_channel(points, 1):
+            ps = points[1]
+            x0 = np.argmax(np.abs(ps))
+            nn = 100
+            trig2 = self.trig_check(points[2][x0-nn:x0+nn])
+            trig3 = self.trig_check(points[3][x0-nn:x0+nn])
+        else: return False
+        if self.trig_single_channel(points, 2): False
+        if self.trig_single_channel(points, 3): False
+        return trig2 and trig3
+
+
 class charge_analyzer(xp.analyzer):
     def __init__(self, **kwargs):
         super(charge_analyzer,self).__init__('charge_analyzer', **kwargs)
-        self.chg = []
-        self.bkg = []
         self.charge_mean = 0
         self.bkg_range = kwargs['bkg_range']
         self.transimp = kwargs['transimp']
         self.channel = kwargs['channel']
         self.moyal = moyal()
+        for i in self.channel:
+            setattr(self,'charge_ch'+str(i),[])
+            setattr(self,'bkg_ch'+str(i),[])
 
     def run(self):
         points = self.data
@@ -87,18 +121,20 @@ class charge_analyzer(xp.analyzer):
         for i in self.channel:
             mean = (points[i][self.bkg_range[0]:self.bkg_range[1]]).mean()
             t0 = points[0][self.bkg_range[0]:self.bkg_range[1]]
+            y1 = points[i]
             y1 = np.subtract(points[i], mean) 
             bkg0 = np.trapz(y1[self.bkg_range[0]:self.bkg_range[1]],x = t[self.bkg_range[0]:self.bkg_range[1]])
             chg0 = np.trapz(y1,x = t)
-            sign = np.sign(np.amax(points[i]))
-        self.chg.append(sign*chg0/self.transimp*1e2)
-        self.bkg.append(sign*bkg0/self.transimp*1e2)
+            sign = np.sign(y1[np.argmax(np.abs(y1))])
+            getattr(self,'charge_ch'+str(i)).append(sign*chg0/self.transimp*1e2)
+            getattr(self,'bkg_ch'+str(i))   .append(sign*bkg0/self.transimp*1e2)
 
     def end(self):
-        self.keep('charge_dist', self.chg)
-        self.keep('bkg_check', self.bkg)
-        self.chg.clear()
-        self.bkg.clear()
+        for i in self.channel:
+            self.keep('charge_ch'+str(i), getattr(self,'charge_ch'+str(i)))
+            self.keep('bkg_ch'+str(i) , getattr(self,'bkg_ch'+str(i)))
+            getattr(self,'charge_ch'+str(i)).clear()
+            getattr(self,'bkg_ch'+str(i)).clear()
 
 
 class jitter_analyzer(xp.analyzer):
@@ -119,11 +155,17 @@ class jitter_analyzer(xp.analyzer):
     def get_cftiming(self, points, channel):
         time = []
         for i in channel:
-            time.append(self.timer.getCFTiming(t = points[0], y= points[i]))
+            try: 
+                time.append(self.timer.getCFTiming(t = points[0], y= points[i]))
+            except: 
+                raise ValueError('CFT error skipped the event')
         return time
 
     def jitter_beamSetup_v0(self, points):
-        time = self.get_cftiming(points, [1,2,3])
+        try: 
+            time = self.get_cftiming(points, [1,2,3])
+        except: 
+            return
         self.dt21.append(time[1]-time[0])
         self.dt32.append(time[2]-time[1])
         self.dt31.append(time[2]-time[0])
@@ -161,14 +203,29 @@ class hist_dist_dqm(xp.dqm):
     def __init__(self,name, **kwargs):
         super(hist_dist_dqm,self).__init__(name, **kwargs)
         self.query_list = [kwargs['x']]
+        self.overlay = True
 
     def run(self):
+        if self.overlay : self.overlay_plot()
+        else : self.single_plot()
+
+    def overlay_plot(self):
         fig, ax = plt.subplots(dpi = 110)
         for key in getattr(self,self.kwargs['x']).keys():
-            plt.hist(np.array(getattr(self,self.kwargs['x'])[key]), bins = 60, label=self.label(key), alpha = 0.5)
+            plt.hist(np.array(getattr(self,self.kwargs['x'])[key]), bins = 60, label=self.label(key), alpha = 0.5, density = True)
         plt.legend(loc= 'best')
         ax.set(xlabel =self.kwargs['xlabel'], ylabel =self.kwargs['ylabel'], title = self.kwargs['title'])
+        plt.grid(True)
         self.keep_fig()
+
+    def single_plot(self):
+        for key in getattr(self,self.kwargs['x']).keys():
+            fig, ax = plt.subplots(dpi = 110)
+            plt.hist(np.array(getattr(self,self.kwargs['x'])[key]), bins = 60, label=self.label(key), alpha = 0.5, density = False)
+            plt.legend(loc= 'best')
+            ax.set(xlabel =self.kwargs['xlabel'], ylabel =self.kwargs['ylabel'], title = self.kwargs['title'])
+            plt.grid(True)
+            self.keep_fig()
 
 class func_xlabel_dqm(xp.dqm):
     def __init__(self,name, **kwargs):
@@ -208,10 +265,18 @@ def HV_label(istring):
 def HV_xlabel(istring):
     return int(re.search('HV\d+',istring).group(0)[2:])
 
-dqm_charge = hist_dist_dqm('dqm_charge', x= 'charge_dist', title = 'charge distribution', xlabel ='charge (fC)', ylabel='Occurance')
-dqm_charge.label = HV_label
 
-dqm_jitter = func_xlabel_dqm('dqm_cal2', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='jitter (ps)')
+dqm_jitter_dt21 = hist_dist_dqm('dqm_jitter_dt21', x='dt21', title='TOA of tch2-tch1',xlabel='TOA (ps)', ylabel = 'Fraction (%)')
+dqm_jitter_dt21.label = HV_label
+dqm_jitter_dt32 = hist_dist_dqm('dqm_jitter_dt32', x='dt32', title='TOA of tch3-tch2',xlabel='TOA (ps)', ylabel = 'Fraction (%)')
+dqm_jitter_dt32.label = HV_label
+dqm_jitter_dt31 = hist_dist_dqm('dqm_jitter_dt31', x='dt31', title='TOA of tch3-tch1',xlabel='TOA (ps)', ylabel = 'Fraction (%)')
+dqm_jitter_dt31.label = HV_label
+dqm_jitter_dt123 = hist_dist_dqm('dqm_jitter_dt123', x='dt123', title='TOA of (tch3+tch1)/2-tch2',xlabel='TOA (ps)', ylabel = 'Fraction (%)')
+dqm_jitter_dt123.label = HV_label
+dqm_jitter_dts = dqm_jitter_dt21+dqm_jitter_dt32+dqm_jitter_dt31+dqm_jitter_dt123
+
+dqm_jitter = func_xlabel_dqm('dqm_cal2', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='Resolution (ps)')
 dqm_jitter.add_variable('sig31', 'tch3-tch1')
 dqm_jitter.add_variable('sig21', 'tch2-tch1')
 dqm_jitter.add_variable('sig32', 'tch3-tch2')
@@ -219,7 +284,7 @@ dqm_jitter.add_variable('sig123', '(tch3+tch1)/2-tch2')
 dqm_jitter.add_variable('cal2', 'drived ch2')
 dqm_jitter.label = HV_xlabel
 
-dqm_jitter_eachCh = func_xlabel_dqm('dqm_sig', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='jitter (ps)')
+dqm_jitter_eachCh = func_xlabel_dqm('dqm_sig', title =  'Jitter vs Voltage', xlabel ='HV (V)', ylabel='Resolution (ps)')
 dqm_jitter_eachCh.add_variable('sig1', 'tch1')
 dqm_jitter_eachCh.add_variable('sig2', 'tch2')
 dqm_jitter_eachCh.add_variable('sig3', 'tch3')
@@ -227,5 +292,16 @@ dqm_jitter_eachCh.add_variable('sig3', 'tch3')
 dqm_jitter_eachCh.label = HV_xlabel
 
 an_jitter_v0 = jitter_analyzer()
-an_charge_v0 = charge_analyzer(channel=[2],transimp = -4400, bkg_range=[0, 400])
+an_charge_v0 = charge_analyzer(channel=[1,2,3],transimp = 4400, bkg_range=[0, 400])
+dqm_charge_ch1= hist_dist_dqm('dqm_charge', x= 'charge_ch1', title = 'charge distribution: channel1', xlabel ='charge (fC)', ylabel='Occurrence')
+dqm_charge_ch1.label = HV_label
+dqm_charge_ch1.overlay = False
+dqm_charge_ch2= hist_dist_dqm('dqm_charge', x= 'charge_ch2', title = 'charge distribution: channel2', xlabel ='charge (fC)', ylabel='Occurrence')
+dqm_charge_ch2.label = HV_label
+dqm_charge_ch2.overlay = False
+dqm_charge_ch3= hist_dist_dqm('dqm_charge', x= 'charge_ch3', title = 'charge distribution: channel3', xlabel ='charge (fC)', ylabel='Occurrence')
+dqm_charge_ch3.label = HV_label
+dqm_charge_ch3.overlay = False
+
+dqm_charge = dqm_charge_ch1+dqm_charge_ch2+dqm_charge_ch3
 
